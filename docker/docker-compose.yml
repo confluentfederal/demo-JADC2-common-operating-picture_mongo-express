@@ -1,0 +1,341 @@
+# JADC2 Common Operating Picture - Confluent Platform 7.7.1 KRaft
+# Full stack with realistic data generation
+
+services:
+  # Kafka with KRaft (no Zookeeper)
+  kafka:
+    image: confluentinc/cp-kafka:7.9.0
+    hostname: kafka
+    container_name: jadc2-kafka
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENERS: 'PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    user: "0:0"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
+      interval: 15s
+      timeout: 15s
+      retries: 20
+      start_period: 60s
+    networks:
+      - jadc2-network
+
+  # Schema Registry
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.9.0
+    hostname: schema-registry
+    container_name: jadc2-schema-registry
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka:29092'
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - jadc2-network
+
+  # ksqlDB Server
+  ksqldb-server:
+    image: confluentinc/cp-ksqldb-server:7.9.0
+    hostname: ksqldb-server
+    container_name: jadc2-ksqldb-server
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    ports:
+      - "8088:8088"
+    environment:
+      KSQL_BOOTSTRAP_SERVERS: "kafka:29092"
+      KSQL_HOST_NAME: ksqldb-server
+      KSQL_LISTENERS: "http://0.0.0.0:8088"
+      KSQL_CACHE_MAX_BYTES_BUFFERING: 0
+      KSQL_KSQL_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      KSQL_KSQL_LOGGING_PROCESSING_TOPIC_REPLICATION_FACTOR: 1
+      KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE: 'true'
+      KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE: 'true'
+      KSQL_KSQL_SERVICE_ID: jadc2_ksql_
+      KSQL_KSQL_CONNECT_URL: "http://kafka-connect:8083"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8088/healthcheck || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+    networks:
+      - jadc2-network
+
+  # ksqlDB CLI
+  ksqldb-cli:
+    image: confluentinc/cp-ksqldb-cli:7.9.0
+    container_name: jadc2-ksqldb-cli
+    depends_on:
+      kafka:
+        condition: service_healthy
+      ksqldb-server:
+        condition: service_started
+    entrypoint: /bin/sh
+    tty: true
+    volumes:
+      - ../ksql:/ksql:ro
+    networks:
+      - jadc2-network
+
+  # Control Center
+  control-center:
+    image: confluentinc/cp-enterprise-control-center:7.9.0
+    hostname: control-center
+    container_name: jadc2-control-center
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      kafka-connect:
+        condition: service_healthy
+    ports:
+      - "9021:9021"
+    environment:
+      CONTROL_CENTER_BOOTSTRAP_SERVERS: 'kafka:29092'
+      CONTROL_CENTER_KSQL_KSQLDB1_URL: "http://ksqldb-server:8088"
+      CONTROL_CENTER_KSQL_KSQLDB1_ADVERTISED_URL: "http://localhost:8088"
+      CONTROL_CENTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      CONTROL_CENTER_CONNECT_CONNECTDEFAULT_CLUSTER: 'http://kafka-connect:8083'
+      CONTROL_CENTER_CONNECT_HEALTHCHECK_ENDPOINT: '/connectors'
+      CONTROL_CENTER_REPLICATION_FACTOR: 1
+      CONTROL_CENTER_INTERNAL_TOPICS_PARTITIONS: 1
+      CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_PARTITIONS: 1
+      CONFLUENT_METRICS_TOPIC_REPLICATION: 1
+      PORT: 9021
+    networks:
+      - jadc2-network
+
+  # Kafka Connect with MongoDB Connector
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect:7.9.0
+    hostname: kafka-connect
+    container_name: jadc2-kafka-connect
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: 'kafka:29092'
+      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
+      CONNECT_GROUP_ID: jadc2-connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: _jadc2-connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: _jadc2-connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: _jadc2-connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: 'false'
+      CONNECT_PLUGIN_PATH: '/usr/share/java,/usr/share/confluent-hub-components'
+      CONNECT_PRODUCER_INTERCEPTOR_CLASSES: 'io.confluent.monitoring.clients.interceptor.MonitoringProducerInterceptor'
+      CONNECT_CONSUMER_INTERCEPTOR_CLASSES: 'io.confluent.monitoring.clients.interceptor.MonitoringConsumerInterceptor'
+    command:
+      - bash
+      - -c
+      - |
+        echo "Installing MongoDB Kafka Connector..."
+        confluent-hub install --no-prompt mongodb/kafka-connect-mongodb:1.14.1 && confluent-hub install --no-prompt confluentinc/kafka-connect-http:1.7.6 && confluent-hub install --no-prompt confluentinc/kafka-connect-mqtt:1.7.6
+        echo "Starting Kafka Connect..."
+        /etc/confluent/docker/run
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8083/connectors || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    networks:
+      - jadc2-network
+
+  # MongoDB (local)
+  mongodb:
+    image: mongo:7.0
+    hostname: mongodb
+    container_name: jadc2-mongodb
+    entrypoint: ["/bin/bash", "/etc/mongo-entrypoint.sh"]
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: jadc2secret
+      MONGO_INITDB_DATABASE: jadc2_cop
+    volumes:
+      - mongodb-data:/data/db
+      - ../scripts/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+      - ../scripts/mongo-keyfile:/etc/mongo-keyfile-source:ro
+      - ../scripts/mongo-entrypoint.sh:/etc/mongo-entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')", "-u", "admin", "-p", "jadc2secret", "--authenticationDatabase", "admin", "--quiet"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    networks:
+      - jadc2-network
+
+  # Mongo Express
+  mongo-express:
+    image: mongo-express:1.0.2
+    container_name: jadc2-mongo-express
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "8082:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
+      ME_CONFIG_MONGODB_ADMINPASSWORD: jadc2secret
+      ME_CONFIG_MONGODB_URL: mongodb://admin:jadc2secret@mongodb:27017/
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: jadc2
+    networks:
+      - jadc2-network
+
+  # Data Generator
+  data-generator:
+    build:
+      context: ../generators
+      dockerfile: Dockerfile
+    container_name: jadc2-data-generator
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SATELLITE_INTERVAL_MS: 5000
+      SIGINT_INTERVAL_MS: 3000
+      GPS_INTERVAL_MS: 4000
+    restart: unless-stopped
+    networks:
+      - jadc2-network
+
+  # Mission Readiness Service
+  mission-readiness-service:
+    build:
+      context: ../microservices/mission-readiness
+      dockerfile: Dockerfile
+    container_name: jadc2-mission-readiness
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      # MongoDB connection for local deployment
+      MONGODB_URI: ${MONGODB_URI:-mongodb://admin:jadc2secret@mongodb:27017/jadc2_cop?authSource=admin}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    ports:
+      - "5001:5001"
+    restart: unless-stopped
+    networks:
+      - jadc2-network
+
+  # RAG Query Service
+  rag-query-service:
+    build:
+      context: ../microservices/rag-query
+      dockerfile: Dockerfile
+    container_name: jadc2-rag-query
+    environment:
+      # MongoDB connection for local deployment
+      MONGODB_URI: ${MONGODB_URI:-mongodb://admin:jadc2secret@mongodb:27017/jadc2_cop?authSource=admin}
+    ports:
+      - "5002:5002"
+    restart: unless-stopped
+    networks:
+      - jadc2-network
+
+  # Dashboard
+  cop-dashboard:
+    build:
+      context: ../visualization
+      dockerfile: Dockerfile
+    container_name: jadc2-cop-dashboard
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mission-readiness-service:
+        condition: service_started
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks:
+      - jadc2-network
+
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    hostname: mosquitto
+    container_name: jadc2-mosquitto
+    ports:
+      - "1883:1883"
+    command: sh -c "echo listener 1883 > /tmp/m.conf && echo allow_anonymous true >> /tmp/m.conf && mosquitto -c /tmp/m.conf -v"
+    networks:
+      - jadc2-network
+  external-systems-generator:
+    build:
+      context: ../external-systems
+      dockerfile: Dockerfile
+    container_name: jadc2-external-systems
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    environment:
+      ATLAS_URI: "mongodb://admin:jadc2secret@mongodb:27017/?authSource=admin"
+      MQTT_BROKER: "mosquitto"
+      MQTT_PORT: "1883"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+    restart: unless-stopped
+    networks:
+      - jadc2-network
+networks:
+  jadc2-network:
+    driver: bridge
+
+volumes:
+  kafka-data:
+  mongodb-data:
+  connect-plugins:

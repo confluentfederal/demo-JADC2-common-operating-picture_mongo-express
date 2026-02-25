@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JADC2 COP - Multi-Domain Tracking</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-primary: #0a0e14; --bg-secondary: #111820; --bg-tertiary: #1a2332;
+            --border: #2d3748; --blue: #00d4ff; --green: #00ff88; --yellow: #ffd93d;
+            --red: #ff4757; --orange: #ff9f43; --purple: #a855f7; --text: #e2e8f0; --dim: #64748b;
+        }
+        body { font-family: 'Consolas', monospace; background: var(--bg-primary); color: var(--text); height: 100vh; overflow: hidden; }
+        .container { display: grid; grid-template-columns: 240px 1fr 280px; grid-template-rows: 38px auto 1fr; height: 100vh; gap: 1px; background: var(--border); }
+        .header { grid-column: 1/-1; background: var(--bg-secondary); display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 2px solid var(--blue); }
+        .header h1 { font-size: 0.75rem; color: var(--blue); letter-spacing: 2px; }
+        .header-stats { display: flex; gap: 10px; font-size: 0.55rem; }
+
+        .alert-banner { grid-column: 1/-1; background: #1a1a2e; border-bottom: 1px solid var(--red); display: none; max-height: 100px; overflow-y: auto; }
+        .alert-banner.active { display: block; }
+        .alert-banner-header { background: var(--red); color: #fff; padding: 3px 12px; font-size: 0.55rem; font-weight: bold; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 1; }
+        .clear-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: #fff; padding: 2px 8px; font-size: 0.5rem; cursor: pointer; border-radius: 3px; }
+        .threat-line { display: flex; align-items: center; gap: 8px; padding: 3px 12px; font-size: 0.5rem; border-bottom: 1px solid #2a2a3e; cursor: pointer; }
+        .threat-line:hover { background: rgba(255,71,87,0.15); }
+
+        .sidebar { background: var(--bg-secondary); padding: 6px; overflow-y: auto; font-size: 0.5rem; }
+        .sidebar::-webkit-scrollbar { width: 4px; }
+        .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        .section { margin-bottom: 8px; }
+        .section-title { font-size: 0.45rem; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; padding-bottom: 3px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+
+        .card { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 3px; padding: 4px 6px; margin-bottom: 3px; cursor: pointer; transition: background 0.15s; }
+        .card:hover { border-color: var(--blue); background: rgba(0,212,255,0.1); }
+        .card.us { border-left: 2px solid var(--blue); }
+        .card.ru { border-left: 2px solid var(--red); }
+        .card.cn { border-left: 2px solid var(--yellow); }
+        .card.ir { border-left: 2px solid #da291c; }
+        .card.cyber { border-left: 2px solid var(--purple); background: rgba(168,85,247,0.05); }
+        .card-header { display: flex; justify-content: space-between; align-items: center; }
+        .card-title { font-weight: bold; font-size: 0.48rem; }
+        .card-sub { color: var(--dim); font-size: 0.42rem; margin-top: 1px; }
+        .sev-badge { font-size: 0.38rem; padding: 1px 4px; border-radius: 2px; font-weight: bold; }
+        .sev-badge.CRITICAL { background: var(--red); color: #fff; }
+        .sev-badge.HIGH { background: var(--orange); color: #000; }
+        .sev-badge.MEDIUM { background: var(--yellow); color: #000; }
+
+        .map-container { position: relative; grid-row: span 2; }
+        #map { width: 100%; height: 100%; }
+        .map-controls { position: absolute; top: 6px; left: 6px; z-index: 1000; display: flex; gap: 3px; flex-wrap: wrap; max-width: 350px; }
+        .layer-btn { padding: 3px 7px; font-size: 0.42rem; font-family: inherit; background: rgba(10,14,20,0.85); border: 1px solid var(--border); color: var(--dim); border-radius: 3px; cursor: pointer; transition: all 0.15s; }
+        .layer-btn.active { background: rgba(0,212,255,0.15); border-color: var(--blue); color: var(--blue); }
+        .layer-btn:hover { border-color: var(--blue); }
+
+        .right-panel { background: var(--bg-secondary); display: flex; flex-direction: column; grid-row: span 2; overflow: hidden; }
+        .tab-bar { display: flex; background: var(--bg-primary); border-bottom: 1px solid var(--border); }
+        .tab { flex: 1; padding: 6px 4px; font-size: 0.45rem; text-align: center; cursor: pointer; border-bottom: 2px solid transparent; color: var(--dim); font-family: inherit; background: none; border-top: none; border-left: none; border-right: none; }
+        .tab.active { color: var(--blue); border-bottom-color: var(--blue); background: var(--bg-secondary); }
+        .tab-content { display: none; flex: 1; overflow-y: auto; padding: 6px; font-size: 0.46rem; }
+        .tab-content::-webkit-scrollbar { width: 4px; }
+        .tab-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        .tab-content.active { display: block; }
+
+        .alert-card { background: var(--bg-tertiary); border: 1px solid var(--border); border-left: 3px solid var(--orange); border-radius: 3px; padding: 5px; margin-bottom: 4px; cursor: pointer; transition: background 0.15s; }
+        .alert-card:hover { background: rgba(0,212,255,0.1); }
+        .alert-card.CRITICAL { border-left-color: var(--red); }
+        .alert-card.HIGH { border-left-color: var(--orange); }
+        .alert-card.cyber { border-left-color: var(--purple); }
+        .alert-header { display: flex; justify-content: space-between; margin-bottom: 2px; }
+        .alert-sev { font-weight: bold; font-size: 0.42rem; }
+        .alert-sev.CRITICAL { color: var(--red); }
+        .alert-sev.HIGH { color: var(--orange); }
+        .alert-msg { font-size: 0.42rem; color: var(--text); }
+        .alert-loc { font-size: 0.38rem; color: var(--blue); margin-top: 2px; }
+
+        .cyber-detail { background: var(--bg-tertiary); border: 1px solid var(--purple); border-radius: 4px; padding: 6px; margin-bottom: 5px; cursor: pointer; }
+        .cyber-detail h4 { color: var(--purple); font-size: 0.5rem; margin-bottom: 4px; }
+        .cyber-row { display: flex; justify-content: space-between; font-size: 0.44rem; padding: 2px 0; border-bottom: 1px solid rgba(45,55,72,0.5); }
+        .cyber-label { color: var(--dim); }
+
+        .sigint-card { background: var(--bg-tertiary); border: 1px solid #06b6d4; border-radius: 4px; padding: 6px; margin-bottom: 5px; }
+        .sigint-card h4 { color: #06b6d4; font-size: 0.5rem; margin-bottom: 4px; }
+
+        .query-section { padding: 6px; border-top: 1px solid var(--border); }
+        .query-input { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; font-size: 0.45rem; border-radius: 3px; font-family: inherit; }
+        #query-result { font-size: 0.42rem; color: var(--dim); margin-top: 4px; max-height: 80px; overflow-y: auto; }
+
+        .leaflet-popup-content-wrapper { background: #fff; color: #000; border-radius: 4px; }
+        .leaflet-popup-content { margin: 6px 8px; }
+        .popup-title { font-size: 10px; font-weight: bold; margin-bottom: 4px; color: #000; }
+        .popup-row { display: flex; justify-content: space-between; font-size: 9px; padding: 1px 0; border-bottom: 1px solid #eee; }
+        .popup-label { color: #666; }
+        .popup-value { color: #000; font-weight: bold; }
+        .popup-value.friendly { color: #00aa55; }
+        .popup-value.hostile { color: #cc0000; }
+        .popup-weapons { font-size: 8px; color: #555; margin-top: 4px; padding-top: 4px; border-top: 1px solid #ddd; }
+
+        .critical-flash { animation: pulse-crit 1.5s infinite; }
+        @keyframes pulse-crit { 0%,100%{opacity:1}50%{opacity:0.4} }
+        .nuke-marker { animation: pulse-nuke 2s infinite; }
+        @keyframes pulse-nuke { 0%,100%{opacity:1}50%{opacity:0.5} }
+
+        .action-btns { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+        .action-btn { padding: 3px 6px; font-size: 0.4rem; font-family: inherit; border: 1px solid; border-radius: 3px; cursor: pointer; font-weight: bold; transition: all 0.15s; }
+        .action-btn:hover { filter: brightness(1.3); transform: scale(1.05); }
+        .action-btn:active { transform: scale(0.95); }
+        .action-btn.red { background: rgba(255,71,87,0.2); border-color: var(--red); color: var(--red); }
+        .action-btn.orange { background: rgba(255,159,67,0.2); border-color: var(--orange); color: var(--orange); }
+        .action-btn.purple { background: rgba(168,85,247,0.2); border-color: var(--purple); color: var(--purple); }
+        .action-btn.blue { background: rgba(0,212,255,0.2); border-color: var(--blue); color: var(--blue); }
+        .action-btn.green { background: rgba(0,255,136,0.2); border-color: var(--green); color: var(--green); }
+        .action-btn.cyan { background: rgba(6,182,212,0.2); border-color: #06b6d4; color: #06b6d4; }
+        .action-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+        .selected-item { border: 1px solid var(--blue) !important; background: rgba(0,212,255,0.08) !important; }
+
+        .action-log-entry { padding: 4px 6px; border-bottom: 1px solid var(--border); font-size: 0.42rem; animation: asl 0.3s ease; }
+        @keyframes asl { from{opacity:0;transform:translateY(-5px)} to{opacity:1;transform:translateY(0)} }
+        .action-log-entry .log-time { color: var(--dim); font-size: 0.38rem; }
+        .action-log-entry .log-domain { font-weight: bold; }
+        .action-log-entry .log-domain.CYBER { color: var(--purple); }
+        .action-log-entry .log-domain.SIGINT { color: #06b6d4; }
+        .action-log-entry .log-msg { color: var(--text); margin-top: 1px; }
+
+        #toast-container { position: fixed; top: 50px; right: 10px; z-index: 10000; display: flex; flex-direction: column; gap: 4px; }
+        .toast { padding: 8px 14px; border-radius: 4px; font-size: 0.48rem; font-family: inherit; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.5); animation: toast-in 0.3s ease, toast-out 0.3s ease 3.7s forwards; max-width: 340px; }
+        .toast.success { background: linear-gradient(135deg, #0d5c2d, #0a4422); border: 1px solid var(--green); }
+        .toast.error { background: linear-gradient(135deg, #5c0d0d, #440a0a); border: 1px solid var(--red); }
+        @keyframes toast-in { from{opacity:0;transform:translateX(30px)} to{opacity:1;transform:translateX(0)} }
+        @keyframes toast-out { to{opacity:0;transform:translateX(30px)} }
+    </style>
+</head>
+<body>
+    <div id="toast-container"></div>
+    <div class="container">
+        <header class="header">
+            <h1>⚔️ JADC2 COP - MIDDLE EAST</h1>
+            <div class="header-stats">
+                <span>🇺🇸<span id="us-ct">0</span></span>
+                <span>🇷🇺<span id="ru-ct">0</span></span>
+                <span>🇨🇳<span id="cn-ct">0</span></span>
+                <span>🇮🇷<span id="ir-ct">0</span></span>
+                <span>🚢<span id="ship-ct">0</span></span>
+                <span>🔒<span id="cyber-ct">0</span></span>
+                <span>📡<span id="sigint-ct">0</span></span>
+                <span id="clock"></span>
+            </div>
+        </header>
+
+        <div class="alert-banner" id="proximity-banner">
+            <div class="alert-banner-header">
+                <span>⚠️ PROXIMITY ALERTS - HOSTILE FORCES NEAR US ASSETS</span>
+                <button class="clear-btn" onclick="clearProximity()">✕ CLEAR</button>
+            </div>
+            <div id="banner-content"></div>
+        </div>
+
+        <aside class="sidebar">
+            <div class="section">
+                <div class="section-title">AIR TRACKS <span id="air-total">0</span></div>
+                <div id="air-list"></div>
+            </div>
+            <div class="section">
+                <div class="section-title">NAVAL <span id="naval-total">0</span></div>
+                <div id="naval-list"></div>
+            </div>
+            <div class="section">
+                <div class="section-title">CYBER THREATS <span id="cyber-active">0</span></div>
+                <div id="cyber-list"></div>
+            </div>
+            <div class="section">
+                <div class="section-title">SIGINT <span id="sigint-active">0</span></div>
+                <div id="sigint-list"></div>
+            </div>
+        </aside>
+
+        <div class="map-container">
+            <div class="map-controls">
+                <button class="layer-btn active" data-layer="all" onclick="toggleLayer('all')">ALL</button>
+                <button class="layer-btn active" data-layer="air" onclick="toggleLayer('air')">✈ AIR</button>
+                <button class="layer-btn active" data-layer="naval" onclick="toggleLayer('naval')">🚢 NAVAL</button>
+                <button class="layer-btn active" data-layer="ground" onclick="toggleLayer('ground')">🏗 GROUND</button>
+                <button class="layer-btn active" data-layer="cyber" onclick="toggleLayer('cyber')">🔮 CYBER</button>
+                <button class="layer-btn active" data-layer="sigint" onclick="toggleLayer('sigint')">📡 SIGINT</button>
+                <button class="layer-btn active" data-layer="nuke" onclick="toggleLayer('nuke')">☢ NUCLEAR</button>
+                <button class="layer-btn" id="btn-sat" onclick="toggleSatellite()">🛰 SAT</button>
+            </div>
+            <div id="map"></div>
+        </div>
+
+        <aside class="right-panel">
+            <div class="tab-bar">
+                <div class="tab active" onclick="showTab('alerts')">⚠ ALERTS</div>
+                <div class="tab" onclick="showTab('cyber')">🔮 CYBER</div>
+                <div class="tab" onclick="showTab('sigint')">📡 SIGINT</div>
+                <div class="tab" onclick="showTab('query')">🔍 QUERY</div>
+                <div class="tab" onclick="showTab('actions')">⚡ ACTIONS</div>
+            </div>
+            <div id="alerts-tab" class="tab-content active">
+                <div id="alert-list"></div>
+            </div>
+            <div id="cyber-tab" class="tab-content">
+                <div id="cyber-detail"></div>
+            </div>
+            <div id="sigint-tab" class="tab-content">
+                <div id="sigint-detail"></div>
+            </div>
+            <div id="query-tab" class="tab-content">
+                <div class="query-section">
+                    <input class="query-input" id="query-input" placeholder="Ask about the battlespace..." onkeydown="if(event.key==='Enter')runQuery()">
+                    <div id="query-result" style="margin-top:6px;"></div>
+                </div>
+            </div>
+            <div id="actions-tab" class="tab-content">
+                <div id="action-log" style="font-size:0.43rem;"><div style="color:var(--dim);padding:8px;">No actions taken yet</div></div>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        const API = 'http://localhost:5001';
+        const PROXIMITY_MILES = 20;
+        let map, markers = {}, trails = {}, posHist = {};
+        let baseLayer, satLayer, isSatellite = false;
+        let layers = {all:true, air:true, naval:true, ground:true, cyber:true, sigint:true, nuke:true};
+        let aircraft = [], naval = [], cyberThreats = [], sigintData = [], alerts = [];
+        let proxDismissed = false;
+        let selectedCyber = null, selectedSigint = null;
+        let selectedCyberId = null, selectedSigintId = null;
+        let actionLog = [];
+
+        function showToast(msg, type='success') {
+            const t = document.createElement('div');
+            t.className = 'toast '+type;
+            t.textContent = msg;
+            document.getElementById('toast-container').appendChild(t);
+            setTimeout(()=>t.remove(), 4000);
+        }
+
+        async function execCyberAction(action) {
+            if (!selectedCyber) return;
+            const c = selectedCyber;
+            const btn = event.target; btn.disabled = true; btn.textContent = '...';
+            try {
+                const r = await fetch(API+'/api/cyber/action', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({incident_id:c.incident_id, action:action, source_ip:c.source_ip, target_system:c.target_system, severity:c.severity})});
+                const data = await r.json();
+                if (data.success) {
+                    showToast('CYBER: '+(data.action.details?.message||action+' executed'));
+                    actionLog.unshift(data.action);
+                    renderActionLog();
+                } else { showToast('Failed: '+(data.error||'Unknown'),'error'); }
+            } catch(e) { showToast('Action failed: '+e.message,'error'); }
+            btn.disabled = false; btn.textContent = action.replace(/_/g,' ').toUpperCase();
+        }
+
+        async function execSigintAction(action) {
+            if (!selectedSigint) return;
+            const s = selectedSigint;
+            const btn = event.target; btn.disabled = true; btn.textContent = '...';
+            try {
+                const r = await fetch(API+'/api/sigint/action', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({intercept_id:s.intercept_id, action:action, frequency_band:s.frequency_band||'X-BAND'})});
+                const data = await r.json();
+                if (data.success) {
+                    showToast('SIGINT: '+(data.action.details?.message||action+' executed'));
+                    actionLog.unshift(data.action);
+                    renderActionLog();
+                } else { showToast('Failed: '+(data.error||'Unknown'),'error'); }
+            } catch(e) { showToast('Action failed: '+e.message,'error'); }
+            btn.disabled = false; btn.textContent = action.replace(/_/g,' ').toUpperCase();
+        }
+
+        function renderActionLog() {
+            const el = document.getElementById('action-log');
+            if (!actionLog.length) { el.innerHTML = '<div style="color:var(--dim);padding:8px;">No actions taken yet</div>'; return; }
+            el.innerHTML = actionLog.slice(0,30).map(a =>
+                '<div class="action-log-entry"><div><span class="log-domain '+a.domain+'">'+a.domain+'</span> <span style="color:var(--text);">'+a.action.replace(/_/g,' ').toUpperCase()+'</span> <span class="log-time">'+new Date(a.timestamp).toLocaleTimeString()+'</span></div><div class="log-msg">'+(a.details?.message||'')+'</div></div>'
+            ).join('');
+        }
+
+        function selectCyber(c) {
+            if (!c) return;
+            selectedCyber = c;
+            selectedCyberId = c.incident_id;
+            showTab('cyber');
+            renderCyberDetail();
+            renderLists();
+            if (c.target_lat) panTo(c.target_lat, c.target_lon, 8);
+        }
+
+        function selectSigint(s) {
+            if (!s) return;
+            selectedSigint = s;
+            selectedSigintId = s.intercept_id;
+            showTab('sigint');
+            renderSigintDetail();
+            renderLists();
+            if (s.lat) panTo(s.lat, s.lon, 8);
+        }
+
+        function selectCyberByAlert(el, alertData) {
+            // Find matching cyber threat by facility or source_ip from the alert message
+            const msg = (alertData.message || alertData.alert_message || '').toLowerCase();
+            let match = cyberThreats.find(c => {
+                const fac = (c.target_facility||'').toLowerCase();
+                const ip = (c.source_ip||'').toLowerCase();
+                const atk = (c.attack_type||'').replace(/_/g,' ').toLowerCase();
+                return (fac && msg.includes(fac)) || (ip && msg.includes(ip)) || (atk && msg.includes(atk));
+            });
+            if (!match && cyberThreats.length) match = cyberThreats[0];
+            if (match) {
+                selectCyber(match);
+            } else {
+                showTab('cyber');
+            }
+        }
+
+        // Keep selected items synced after data refresh
+        function syncSelections() {
+            if (selectedCyberId && cyberThreats.length) {
+                const found = cyberThreats.find(c => c.incident_id === selectedCyberId);
+                if (found) selectedCyber = found;
+            }
+            if (selectedSigintId && sigintData.length) {
+                const found = sigintData.find(s => s.intercept_id === selectedSigintId);
+                if (found) selectedSigint = found;
+            }
+        }
+
+        const US_FACILITIES = [
+            {id:'FAC-001', name:'Al Udeid AB', lat:25.117, lon:51.315, type:'AIR_BASE', region:'CENTCOM'},
+            {id:'FAC-002', name:'Al Dhafra AB', lat:24.248, lon:54.547, type:'AIR_BASE', region:'CENTCOM'},
+            {id:'FAC-003', name:'Camp Arifjan', lat:28.933, lon:48.100, type:'ARMY_BASE', region:'CENTCOM'},
+            {id:'FAC-004', name:'NSA Bahrain', lat:26.237, lon:50.652, type:'NAVAL_BASE', region:'CENTCOM'},
+            {id:'FAC-005', name:'Al Asad AB', lat:33.786, lon:42.441, type:'AIR_BASE', region:'CENTCOM'},
+            {id:'FAC-006', name:'Incirlik AB', lat:37.002, lon:35.426, type:'AIR_BASE', region:'EUCOM'},
+        ];
+
+        const IRANIAN_NUCLEAR = [
+            {name:'Natanz Enrichment', lat:33.724, lon:51.727, type:'ENRICHMENT', status:'ACTIVE'},
+            {name:'Fordow Enrichment', lat:34.883, lon:51.063, type:'ENRICHMENT', status:'ACTIVE'},
+            {name:'Isfahan UCF', lat:32.592, lon:51.488, type:'CONVERSION', status:'ACTIVE'},
+            {name:'Arak Heavy Water', lat:34.377, lon:49.243, type:'REACTOR', status:'MODIFIED'},
+            {name:'Bushehr NPP', lat:28.831, lon:50.886, type:'POWER_PLANT', status:'ACTIVE'},
+            {name:'Parchin Complex', lat:35.522, lon:51.773, type:'RESEARCH', status:'SUSPECTED'},
+        ];
+
+        const SHIP_SVG = {
+            CARRIER:'<svg viewBox="0 0 40 18" width="26" height="12"><path d="M2 9 L8 3 L32 3 L38 9 L32 15 L8 15 Z" fill="COLOR" stroke="#fff" stroke-width="1"/></svg>',
+            CRUISER:'<svg viewBox="0 0 32 14" width="22" height="10"><path d="M2 7 L5 2 L27 2 L30 7 L27 12 L5 12 Z" fill="COLOR" stroke="#fff" stroke-width="1"/></svg>',
+            DESTROYER:'<svg viewBox="0 0 28 12" width="20" height="9"><path d="M2 6 L5 2 L23 2 L26 6 L23 10 L5 10 Z" fill="COLOR" stroke="#fff" stroke-width="1"/></svg>',
+            FRIGATE:'<svg viewBox="0 0 24 10" width="18" height="8"><path d="M2 5 L4 2 L20 2 L22 5 L20 8 L4 8 Z" fill="COLOR" stroke="#fff" stroke-width="1"/></svg>',
+            SUBMARINE:'<svg viewBox="0 0 28 8" width="20" height="6"><ellipse cx="14" cy="4" rx="12" ry="3" fill="COLOR" stroke="#fff" stroke-width="1"/></svg>',
+            MISSILE_BOAT:'<svg viewBox="0 0 20 8" width="16" height="6"><path d="M2 4 L4 1 L16 1 L18 4 L16 7 L4 7 Z" fill="COLOR" stroke="#fff" stroke-width="1"/></svg>',
+            PATROL:'<svg viewBox="0 0 16 6" width="14" height="5"><ellipse cx="8" cy="3" rx="6" ry="2.5" fill="COLOR" stroke="#fff" stroke-width="1"/></svg>',
+            AMPHIBIOUS:'<svg viewBox="0 0 32 12" width="22" height="9"><path d="M2 6 L5 2 L27 2 L30 6 L27 10 L5 10 Z" fill="COLOR" stroke="#fff" stroke-width="1"/></svg>',
+        };
+
+        function getColor(c) { return {US:'#00d4ff',RU:'#ff4757',CN:'#ffd93d',IR:'#da291c'}[c]||'#888'; }
+        function getFlag(c) { return {US:'🇺🇸',RU:'🇷🇺',CN:'🇨🇳',IR:'🇮🇷',KP:'🇰🇵'}[c]||'🏴'; }
+        function getCyberIcon(t) { return {NETWORK_INTRUSION:'🔓',MALWARE_DETECTED:'🦠',DATA_EXFILTRATION:'📤',C2_COMMUNICATION:'📡',RANSOMWARE_ATTEMPT:'💰',ZERO_DAY_EXPLOIT:'💀',PHISHING_CAMPAIGN:'🎣',CREDENTIAL_THEFT:'🔑',LATERAL_MOVEMENT:'↔️',DNS_TUNNELING:'🚇',BRUTE_FORCE:'🔨',PORT_SCAN:'🔍'}[t]||'⚠️'; }
+        function getSigintIcon(t) { return {RADAR:'📡',JAMMER:'📻',COMMS:'📞',DATALINK:'🔗',IFF:'🔵'}[t]||'📶'; }
+        function haversine(lat1,lon1,lat2,lon2) { const R=3440.065,dLat=(lat2-lat1)*Math.PI/180,dLon=(lon2-lon1)*Math.PI/180,a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2; return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); }
+
+        function toggleSatellite() {
+            isSatellite = !isSatellite;
+            document.getElementById('btn-sat').classList.toggle('active', isSatellite);
+            if (isSatellite) { map.removeLayer(baseLayer); satLayer.addTo(map); }
+            else { map.removeLayer(satLayer); baseLayer.addTo(map); }
+        }
+
+        function toggleLayer(layer) {
+            if (layer === 'all') {
+                const allActive = Object.values(layers).every(v => v);
+                Object.keys(layers).forEach(k => layers[k] = !allActive);
+            } else {
+                layers[layer] = !layers[layer];
+            }
+            // Update ALL button state
+            layers.all = Object.entries(layers).filter(([k])=>k!=='all').every(([k,v])=>v);
+            document.querySelectorAll('.layer-btn').forEach(btn => {
+                const l = btn.dataset.layer;
+                if (l) btn.classList.toggle('active', layers[l]);
+            });
+            updateVisibility();
+            // Restore open popup
+            if (openPopupId && markers[openPopupId]) {
+                markers[openPopupId].openPopup();
+            }
+        }
+
+        function updateVisibility() {
+            // Toggle markers on/off map
+            Object.entries(markers).forEach(([id, m]) => {
+                if (!m || !m.layerType) return;
+                const show = layers[m.layerType];
+                if (show && !map.hasLayer(m)) m.addTo(map);
+                else if (!show && map.hasLayer(m)) map.removeLayer(m);
+            });
+            // Toggle trails
+            Object.entries(trails).forEach(([id, t]) => {
+                if (!t || !t.layerType) return;
+                const show = layers[t.layerType];
+                if (show && !map.hasLayer(t)) t.addTo(map);
+                else if (!show && map.hasLayer(t)) map.removeLayer(t);
+            });
+        }
+
+        function initMap() {
+            map = L.map('map', {center:[25,45], zoom:4, minZoom:3, maxZoom:12, zoomControl:false});
+            baseLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+            satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}');
+            L.control.zoom({position:'bottomright'}).addTo(map);
+
+            // US Facilities
+            US_FACILITIES.forEach(f => {
+                const m = L.marker([f.lat,f.lon], {
+                    icon: L.divIcon({className:'', html:'<div style="width:10px;height:10px;background:#00ff88;border:2px solid #fff;border-radius:2px;box-shadow:0 0 6px rgba(0,255,136,0.5);"></div>', iconSize:[14,14], iconAnchor:[7,7]})
+                }).bindPopup('<div style="min-width:150px;"><div class="popup-title">🇺🇸 '+f.name+'</div><div class="popup-row"><span class="popup-label">Type</span><span class="popup-value">'+f.type+'</span></div><div class="popup-row"><span class="popup-label">Region</span><span class="popup-value">'+f.region+'</span></div></div>').addTo(map);
+                m.layerType = 'ground';
+                markers['fac-'+f.id] = m;
+            });
+
+            // Iranian Nuclear
+            IRANIAN_NUCLEAR.forEach(n => {
+                const m = L.marker([n.lat,n.lon], {
+                    icon: L.divIcon({className:'', html:'<div class="nuke-marker" style="width:12px;height:12px;background:#ff0;border:2px solid #f00;border-radius:50%;box-shadow:0 0 8px rgba(255,255,0,0.6);"></div>', iconSize:[16,16], iconAnchor:[8,8]})
+                }).bindPopup('<div style="min-width:150px;"><div class="popup-title">☢️ '+n.name+'</div><div class="popup-row"><span class="popup-label">Type</span><span class="popup-value">'+n.type+'</span></div><div class="popup-row"><span class="popup-label">Status</span><span class="popup-value" style="color:red;">'+n.status+'</span></div></div>').addTo(map);
+                m.layerType = 'nuke';
+                markers['nuke-'+n.name] = m;
+            });
+        }
+
+        function createAircraftMarker(ac) {
+            const color = getColor(ac.country);
+            const lat = ac.final_lat || ac.lat;
+            const lon = ac.final_lon || ac.lon;
+            const hasGps = ac.gps_lat !== undefined && ac.gps_lat !== null;
+            const gpsIndicator = hasGps ? '📡' : '📍';
+
+            return L.marker([lat, lon], {
+                icon: L.divIcon({className:'', html:'<div style="transform:rotate('+(ac.heading_deg||0)+'deg);color:'+color+';font-size:11px;text-shadow:0 0 3px #000;">✈</div>', iconSize:[14,14], iconAnchor:[7,7]})
+            }).bindPopup('<div style="min-width:200px;"><div class="popup-title">'+getFlag(ac.country)+' '+ac.aircraft_type+'</div><div class="popup-row"><span class="popup-label">Tail</span><span class="popup-value">'+ac.tail_number+'</span></div><div class="popup-row"><span class="popup-label">IFF</span><span class="popup-value '+(ac.iff_mode==='FRIENDLY'?'friendly':'hostile')+'">'+ac.iff_mode+'</span></div><div class="popup-row"><span class="popup-label">Alt</span><span class="popup-value">'+(ac.altitude_ft||0).toLocaleString()+' ft</span></div><div class="popup-row"><span class="popup-label">Speed</span><span class="popup-value">'+(ac.speed_kts||0)+' kts</span></div><div class="popup-row"><span class="popup-label">Heading</span><span class="popup-value">'+(ac.heading_deg||0).toFixed(0)+'°</span></div><div class="popup-row"><span class="popup-label">Status</span><span class="popup-value">'+(ac.status||'Unknown')+'</span></div><div style="background:#1a2332;padding:4px;margin-top:4px;border-radius:3px;font-size:8px;color:#e2e8f0;color:#e2e8f0;"><div style="color:#00d4ff;font-weight:bold;">'+gpsIndicator+' GPS DATA</div><div>Lat: '+lat.toFixed(6)+'°</div><div>Lon: '+lon.toFixed(6)+'°</div>'+(hasGps?'<div style="color:#00ff88;">✓ GPS Verified</div>':'<div style="color:#ff9f43;">⚠ Radar Only</div>')+'</div><div class="popup-weapons"><b>Weapons:</b> '+(ac.weapons||'Unknown')+'</div></div>');
+        }
+
+        function createNavalMarker(ship) {
+            const color = getColor(ship.country);
+            const svgKey = ship.vessel_class || 'FRIGATE';
+            const svg = (SHIP_SVG[svgKey] || SHIP_SVG.FRIGATE).replace(/COLOR/g, color);
+            return L.marker([ship.lat, ship.lon], {
+                icon: L.divIcon({className:'', html:'<div style="transform:rotate('+(ship.heading_deg||0)+'deg);">'+svg+'</div>', iconSize:[22,12], iconAnchor:[11,6]})
+            }).bindPopup('<div style="min-width:200px;"><div class="popup-title">'+getFlag(ship.country)+' '+ship.vessel_type+'</div><div class="popup-row"><span class="popup-label">Hull</span><span class="popup-value">'+ship.hull_number+'</span></div><div class="popup-row"><span class="popup-label">Class</span><span class="popup-value">'+ship.vessel_class+'</span></div><div class="popup-row"><span class="popup-label">IFF</span><span class="popup-value '+(ship.iff_mode==='FRIENDLY'?'friendly':'hostile')+'">'+ship.iff_mode+'</span></div><div class="popup-row"><span class="popup-label">Speed</span><span class="popup-value">'+(ship.speed_kts||0)+' kts</span></div><div class="popup-row"><span class="popup-label">Heading</span><span class="popup-value">'+(ship.heading_deg||0).toFixed(0)+'°</span></div>'+(ship.aircraft_capacity?'<div class="popup-row"><span class="popup-label">Aircraft</span><span class="popup-value">'+ship.aircraft_capacity+'</span></div>':'')+'<div style="background:#1a2332;padding:4px;margin-top:4px;border-radius:3px;font-size:8px;color:#e2e8f0;"><div style="color:#00d4ff;font-weight:bold;">📍 POSITION</div><div>Lat: '+ship.lat.toFixed(6)+'°</div><div>Lon: '+ship.lon.toFixed(6)+'°</div></div><div class="popup-weapons"><b>Weapons:</b> '+(ship.weapons||'Unknown')+'</div></div>');
+        }
+
+        function createSigintMarker(sig) {
+            const color = sig.threat_level==='CRITICAL'?'#ff4757':sig.threat_level==='HIGH'?'#ff9f43':'#ffd93d';
+            const icon = getSigintIcon(sig.signal_type);
+            const flashClass = sig.threat_level==='CRITICAL'?'critical-flash':'';
+            const actions = sig.corrective_actions || ['Monitor and report','Update threat picture'];
+            const actionsHtml = actions.map(a=>'<div style="color:#00d4ff;">• '+a+'</div>').join('');
+
+            return L.marker([sig.lat, sig.lon], {
+                icon: L.divIcon({className:'', html:'<div class="'+flashClass+'" style="background:'+color+';width:20px;height:20px;border:2px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;box-shadow:0 0 8px '+color+';">'+icon+'</div>', iconSize:[24,24], iconAnchor:[12,12]})
+            }).bindPopup('<div style="min-width:220px;"><div class="popup-title">'+icon+' '+sig.signal_type+' - '+(sig.emitter_classification||'Unknown')+'</div><div class="popup-row"><span class="popup-label">Threat</span><span class="popup-value" style="color:'+color+';font-weight:bold;">'+sig.threat_level+'</span></div><div class="popup-row"><span class="popup-label">Frequency</span><span class="popup-value">'+(sig.frequency_mhz||0).toFixed(2)+' MHz</span></div><div class="popup-row"><span class="popup-label">Signal</span><span class="popup-value">'+(sig.signal_strength_dbm||0).toFixed(1)+' dBm</span></div><div class="popup-row"><span class="popup-label">Bearing</span><span class="popup-value">'+(sig.bearing_deg||0).toFixed(1)+'°</span></div><div class="popup-row"><span class="popup-label">Pattern</span><span class="popup-value">'+(sig.emission_pattern||'Unknown')+'</span></div><div class="popup-row"><span class="popup-label">Collector</span><span class="popup-value">'+(sig.collector_id||'Unknown')+'</span></div><div class="popup-row"><span class="popup-label">Confidence</span><span class="popup-value">'+(sig.confidence_pct||0).toFixed(0)+'%</span></div><div style="background:#0d2818;padding:4px;margin-top:4px;border-radius:3px;font-size:8px;color:#fff;"><div style="color:#00ff88;font-weight:bold;">⚡ CORRECTIVE ACTIONS</div>'+actionsHtml+'</div></div>');
+        }
+
+        function createCyberMarker(c) {
+            if (!c.target_lat || !c.target_lon) return null;
+            const color = c.severity==='CRITICAL'?'#ff4757':'#a855f7';
+            return L.marker([c.target_lat, c.target_lon], {
+                icon: L.divIcon({className:'', html:'<div style="background:'+color+';width:16px;height:16px;border:2px solid #fff;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:9px;box-shadow:0 0 6px '+color+';">'+getCyberIcon(c.attack_type)+'</div>', iconSize:[20,20], iconAnchor:[10,10]})
+            }).bindPopup('<div style="min-width:200px;"><div class="popup-title">'+getCyberIcon(c.attack_type)+' '+c.attack_type.replace(/_/g,' ')+'</div><div class="popup-row"><span class="popup-label">Severity</span><span class="sev-badge '+c.severity+'">'+c.severity+'</span></div><div class="popup-row"><span class="popup-label">Actor</span><span class="popup-value">'+getFlag(c.actor_country)+' '+c.threat_actor+'</span></div><div class="popup-row"><span class="popup-label">Target</span><span class="popup-value">'+(c.target_facility||c.target_system)+'</span></div><div class="popup-row"><span class="popup-label">Source IP</span><span class="popup-value">'+(c.source_ip||'')+'</span></div><div class="popup-row"><span class="popup-label">MITRE</span><span class="popup-value">'+(c.mitre_attack||'')+'</span></div><div class="popup-row"><span class="popup-label">Status</span><span class="popup-value">'+(c.status||'')+'</span></div></div>');
+        }
+
+		function updateMarkers() {
+            // Find which marker has an open popup so we can preserve it
+            let openId = null;
+            Object.entries(markers).forEach(([id, m]) => {
+                if (m && m.getPopup && m.getPopup() && m.getPopup().isOpen()) openId = id;
+            });
+            // Clear only dynamic markers and trails (preserve fac-, nuke-, and open popup marker)
+            Object.entries(markers).forEach(([id, m]) => {
+                if (!id.startsWith('fac-') && !id.startsWith('nuke-') && id !== openId) { if(m && m.remove) m.remove(); delete markers[id]; }
+            });
+            Object.values(trails).forEach(t => { if(t && t.remove) t.remove(); });
+            trails = {};
+
+            // Aircraft
+            aircraft.forEach((ac, idx) => {
+                const m = createAircraftMarker(ac);
+                m.layerType = 'air';
+                const id = ac.aircraft_id || ('ac-idx-'+idx);
+                markers['ac-'+id] = m;
+                if (layers.air) m.addTo(map);
+                const lat = ac.final_lat||ac.lat, lon = ac.final_lon||ac.lon;
+                if (lat && lon && ac.aircraft_id) {
+                    if (!posHist[id]) posHist[id] = [];
+                    const prev = posHist[id].length ? posHist[id][posHist[id].length-1] : null;
+                    if (!prev || haversine(prev[0],prev[1],lat,lon) < 50) {
+                        posHist[id].push([lat, lon]);
+                        if (posHist[id].length > 15) posHist[id].shift();
+                    } else {
+                        posHist[id] = [[lat, lon]];
+                    }
+                    if (posHist[id].length > 1) {
+                        const t = L.polyline(posHist[id], {color:getColor(ac.country), weight:1, opacity:0.4, dashArray:'4,4'});
+                        t.layerType = 'air';
+                        if (layers.air) t.addTo(map);
+                        trails['ac-'+id] = t;
+                    }
+                }
+            });
+
+            // Naval
+            naval.forEach((ship, idx) => {
+                const m = createNavalMarker(ship);
+                m.layerType = 'naval';
+                const id = ship.vessel_id || ('nv-idx-'+idx);
+                markers['nv-'+id] = m;
+                if (layers.naval) m.addTo(map);
+                if (ship.lat && ship.lon && ship.vessel_id) {
+                    if (!posHist[id]) posHist[id] = [];
+                    const prev = posHist[id].length ? posHist[id][posHist[id].length-1] : null;
+                    if (!prev || haversine(prev[0],prev[1],ship.lat,ship.lon) < 30) {
+                        posHist[id].push([ship.lat, ship.lon]);
+                        if (posHist[id].length > 15) posHist[id].shift();
+                    } else {
+                        posHist[id] = [[ship.lat, ship.lon]];
+                    }
+                    if (posHist[id].length > 1) {
+                        const t = L.polyline(posHist[id], {color:getColor(ship.country), weight:1.5, opacity:0.5, dashArray:'6,4'});
+                        t.layerType = 'naval';
+                        if (layers.naval) t.addTo(map);
+                        trails['nv-'+id] = t;
+                    }
+                }
+            });
+
+            // SIGINT
+            sigintData.forEach((sig, idx) => {
+                if (!sig.lat || !sig.lon) return;
+                const m = createSigintMarker(sig);
+                m.layerType = 'sigint';
+                const id = sig.intercept_id || ('sig-idx-'+idx);
+                markers['sig-'+id] = m;
+                if (layers.sigint) m.addTo(map);
+            });
+
+            // Cyber
+            cyberThreats.forEach((c, idx) => {
+                const m = createCyberMarker(c);
+                if (m) {
+                    m.layerType = 'cyber';
+                    const id = c.incident_id || ('cy-idx-'+idx);
+                    markers['cy-'+id] = m;
+                    if (layers.cyber) m.addTo(map);
+                }
+            });
+        }
+
+        function checkProximityAlerts() {
+            if (proxDismissed) return;
+            const usAssets = [...aircraft.filter(a=>a.country==='US'), ...naval.filter(s=>s.country==='US')];
+            const hostiles = [...aircraft.filter(a=>['RU','CN','IR'].includes(a.country)), ...naval.filter(s=>['RU','CN','IR'].includes(s.country))];
+            const proxAlerts = [];
+
+            usAssets.forEach(us => {
+                const uLat = us.final_lat||us.lat, uLon = us.final_lon||us.lon;
+                hostiles.forEach(h => {
+                    const dist = haversine(uLat, uLon, h.final_lat||h.lat, h.final_lon||h.lon);
+                    if (dist <= PROXIMITY_MILES) {
+                        proxAlerts.push({
+                            type: h.vessel_id ? 'NAVAL':'AIRCRAFT', flag: getFlag(h.country),
+                            asset: h.aircraft_type||h.vessel_type, tail: h.tail_number||h.hull_number,
+                            lat: h.final_lat||h.lat, lon: h.final_lon||h.lon,
+                            heading: h.heading_deg, dist: dist.toFixed(1), weapons: h.weapons
+                        });
+                    }
+                });
+            });
+
+            const banner = document.getElementById('proximity-banner');
+            if (proxAlerts.length > 0) {
+                banner.classList.add('active');
+                document.getElementById('banner-content').innerHTML = proxAlerts.slice(0,8).map(a =>
+                    '<div class="threat-line" onclick="panTo('+a.lat+','+a.lon+',9)"><span style="font-size:0.85rem;">'+a.flag+'</span><span style="color:var(--red);font-weight:bold;width:65px;">'+a.type+'</span><span style="width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+a.asset+' ('+a.tail+')</span><span style="color:var(--dim);">📍'+a.lat.toFixed(3)+','+a.lon.toFixed(3)+'</span><span style="color:var(--dim);">➤'+(a.heading||0).toFixed(0)+'°</span><span style="color:var(--orange);font-weight:bold;">📏'+a.dist+'nm</span></div>'
+                ).join('');
+            } else {
+                banner.classList.remove('active');
+            }
+        }
+
+        function clearProximity() { proxDismissed = true; document.getElementById('proximity-banner').classList.remove('active'); }
+        function panTo(lat,lon,z) { map.setView([lat,lon], z||8); }
+
+        function renderLists() {
+            const uA=aircraft.filter(a=>a.country==='US'), rA=aircraft.filter(a=>a.country==='RU'), cA=aircraft.filter(a=>a.country==='CN'), iA=aircraft.filter(a=>a.country==='IR');
+            document.getElementById('us-ct').textContent = uA.length;
+            document.getElementById('ru-ct').textContent = rA.length;
+            document.getElementById('cn-ct').textContent = cA.length;
+            document.getElementById('ir-ct').textContent = iA.length;
+            document.getElementById('ship-ct').textContent = naval.length;
+            document.getElementById('cyber-ct').textContent = cyberThreats.length;
+            document.getElementById('sigint-ct').textContent = sigintData.length;
+            document.getElementById('air-total').textContent = aircraft.length;
+            document.getElementById('naval-total').textContent = naval.length;
+            document.getElementById('cyber-active').textContent = cyberThreats.length;
+            document.getElementById('sigint-active').textContent = sigintData.length;
+
+            document.getElementById('air-list').innerHTML = [
+                ...uA.slice(0,2).map(a=>'<div class="card us" onclick="panTo('+a.lat+','+a.lon+',8)"><div class="card-title">🇺🇸 '+a.aircraft_type+'</div><div class="card-sub">'+a.tail_number+' • '+a.status+'</div></div>'),
+                ...rA.slice(0,2).map(a=>'<div class="card ru" onclick="panTo('+a.lat+','+a.lon+',8)"><div class="card-title">🇷🇺 '+a.aircraft_type+'</div><div class="card-sub">'+a.tail_number+' • '+a.status+'</div></div>'),
+                ...iA.slice(0,2).map(a=>'<div class="card ir" onclick="panTo('+a.lat+','+a.lon+',8)"><div class="card-title">🇮🇷 '+a.aircraft_type+'</div><div class="card-sub">'+a.tail_number+' • '+a.status+'</div></div>')
+            ].join('');
+
+            document.getElementById('naval-list').innerHTML = naval.slice(0,5).map(s=>
+                '<div class="card '+s.country.toLowerCase()+'" onclick="panTo('+s.lat+','+s.lon+',8)"><div class="card-title">'+getFlag(s.country)+' '+s.vessel_type+'</div><div class="card-sub">'+s.hull_number+' • '+s.vessel_class+'</div></div>'
+            ).join('');
+
+            document.getElementById('cyber-list').innerHTML = cyberThreats.length ? cyberThreats.slice(0,5).map((c,i)=>
+                '<div class="card cyber '+(selectedCyber&&selectedCyber.incident_id===c.incident_id?'selected-item':'')+'" onclick="selectCyber(cyberThreats['+i+'])"><div class="card-header"><span class="card-title">'+getCyberIcon(c.attack_type)+' '+c.attack_type.replace(/_/g,' ')+'</span><span class="sev-badge '+c.severity+'">'+c.severity+'</span></div><div class="card-sub">'+getFlag(c.actor_country)+' '+c.threat_actor+' → '+c.target_system+'</div></div>'
+            ).join('') : '<div style="color:var(--dim);padding:4px;font-size:0.42rem;">Awaiting cyber intel...</div>';
+
+            document.getElementById('sigint-list').innerHTML = sigintData.length ? sigintData.filter(s=>s.threat_level==='HIGH'||s.threat_level==='CRITICAL').slice(0,4).map((s,i)=> {
+                const fi = sigintData.indexOf(s);
+                return '<div class="card '+(selectedSigint&&selectedSigint.intercept_id===s.intercept_id?'selected-item':'')+'" style="border-left:2px solid #06b6d4;" onclick="selectSigint(sigintData['+fi+'])"><div class="card-header"><span class="card-title">'+getSigintIcon(s.signal_type)+' '+s.signal_type+'</span><span class="sev-badge '+s.threat_level+'">'+s.threat_level+'</span></div><div class="card-sub">'+(s.emitter_classification||'')+' | '+(s.frequency_mhz||0).toFixed(1)+' MHz</div></div>';
+            }).join('') : '<div style="color:var(--dim);padding:4px;font-size:0.42rem;">Awaiting SIGINT...</div>';
+        }
+
+        function renderAlerts() {
+            document.getElementById('alert-list').innerHTML = alerts.length ? alerts.map(a => {
+                const hasLoc = a.lat && a.lon;
+                const isCyber = (a.alert_type||'').includes('CYBER') || (a.message||'').toLowerCase().includes('cyber');
+                const clickAction = isCyber ? 'selectCyberByAlert(this,'+JSON.stringify(a).replace(/"/g,'&quot;')+')' : (hasLoc ? 'panTo('+a.lat+','+a.lon+',9)' : 'showTab(\'alerts\')');
+                const locText = isCyber ? '🔮 Click to locate & take action' : (hasLoc ? '📍 Click to locate' : '🔒 Click for details');
+                return '<div class="alert-card '+a.severity+' '+(isCyber?'cyber':'')+'" onclick="'+clickAction+'" style="cursor:pointer;"><div class="alert-header"><span class="alert-sev '+a.severity+'">'+a.severity+'</span><span style="color:var(--dim);font-size:0.38rem;">'+(a.timestamp?new Date(a.timestamp).toLocaleTimeString():'')+'</span></div><div class="alert-msg">'+(a.message||a.alert_message||'')+'</div><div class="alert-loc">'+locText+'</div></div>';
+            }).join('') : '<div style="color:var(--dim);padding:8px;font-size:0.45rem;">No active alerts</div>';
+        }
+
+        // selectCyber/selectSigint handle tab switching now
+
+        function renderCyberDetail() {
+            let html = '';
+            if (selectedCyber) {
+                const c = selectedCyber;
+                html += '<div class="cyber-detail selected-item" style="margin-bottom:8px;"><h4>'+getCyberIcon(c.attack_type)+' '+(c.attack_type||'').replace(/_/g,' ')+' <span class="sev-badge '+(c.severity||'')+'">'+c.severity+'</span></h4><div class="cyber-row"><span class="cyber-label">Actor</span><span>'+getFlag(c.actor_country)+' '+(c.threat_actor||'')+'</span></div><div class="cyber-row"><span class="cyber-label">Target</span><span>'+(c.target_facility||c.target_system||'')+'</span></div><div class="cyber-row"><span class="cyber-label">System</span><span>'+(c.target_system||'')+'</span></div><div class="cyber-row"><span class="cyber-label">Region</span><span>'+(c.target_region||'')+'</span></div><div class="cyber-row"><span class="cyber-label">Source IP</span><span>'+(c.source_ip||'')+'</span></div><div class="cyber-row"><span class="cyber-label">Protocol</span><span>'+(c.protocol||'')+''+(c.port?':'+c.port:'')+'</span></div><div class="cyber-row"><span class="cyber-label">MITRE</span><span>'+(c.mitre_attack||'')+'</span></div><div class="cyber-row"><span class="cyber-label">Kill Chain</span><span>'+(c.kill_chain_phase||'')+'</span></div><div class="cyber-row"><span class="cyber-label">Risk Score</span><span style="color:var(--red);">'+(c.risk_score||'')+'</span></div><div class="cyber-row"><span class="cyber-label">Status</span><span>'+(c.status||'')+'</span></div><div class="action-btns"><button class="action-btn red" onclick="execCyberAction(\'block_ip\')">🛑 BLOCK IP</button><button class="action-btn orange" onclick="execCyberAction(\'isolate_system\')">🔒 ISOLATE</button><button class="action-btn purple" onclick="execCyberAction(\'alert_team\')">📢 ALERT TEAM</button><button class="action-btn red" onclick="execCyberAction(\'escalate\')">⬆ ESCALATE</button><button class="action-btn blue" onclick="execCyberAction(\'contain\')">🛡 CONTAIN</button><button class="action-btn green" onclick="execCyberAction(\'investigate\')">🔍 INVESTIGATE</button></div></div>';
+            }
+            html += cyberThreats.length ? cyberThreats.filter(c=>!selectedCyber||c.incident_id!==selectedCyber.incident_id).map((c,i) =>
+                '<div class="cyber-detail" onclick="selectCyber(cyberThreats['+cyberThreats.indexOf(c)+'])" style="cursor:pointer;opacity:0.7;"><h4>'+getCyberIcon(c.attack_type)+' '+(c.attack_type||'').replace(/_/g,' ')+' <span class="sev-badge '+(c.severity||'')+'">'+c.severity+'</span></h4><div class="cyber-row"><span class="cyber-label">Actor</span><span>'+getFlag(c.actor_country)+' '+(c.threat_actor||'')+'</span></div><div class="cyber-row"><span class="cyber-label">Target</span><span>'+(c.target_facility||c.target_system||'')+'</span></div><div style="color:var(--blue);font-size:0.38rem;margin-top:2px;">Click to select & take action</div></div>'
+            ).join('') : (selectedCyber?'':'<div style="color:var(--dim);padding:8px;">No cyber threats</div>');
+            document.getElementById('cyber-detail').innerHTML = html;
+        }
+
+        function renderSigintDetail() {
+            let html = '';
+            if (selectedSigint) {
+                const s = selectedSigint;
+                const actions = s.corrective_actions || ['Monitor and report'];
+                html += '<div class="sigint-card selected-item" style="margin-bottom:8px;"><h4>'+getSigintIcon(s.signal_type)+' '+(s.signal_type||'UNKNOWN')+' - '+(s.emitter_classification||'UNKNOWN')+' <span class="sev-badge '+(s.threat_level||'')+'">'+s.threat_level+'</span></h4><div class="cyber-row"><span class="cyber-label">Frequency</span><span>'+Number(s.frequency_mhz||0).toFixed(2)+' MHz</span></div><div class="cyber-row"><span class="cyber-label">Signal Strength</span><span>'+Number(s.signal_strength_dbm||0).toFixed(1)+' dBm</span></div><div class="cyber-row"><span class="cyber-label">Signal Quality</span><span>'+Number(s.signal_quality||0).toFixed(1)+'</span></div><div class="cyber-row"><span class="cyber-label">Bearing</span><span>'+(s.bearing_deg!=null?Number(s.bearing_deg).toFixed(1)+'°':'N/A')+'</span></div><div class="cyber-row"><span class="cyber-label">Bandwidth</span><span>'+(s.bandwidth_khz!=null?s.bandwidth_khz+' kHz':'N/A')+'</span></div><div class="cyber-row"><span class="cyber-label">Modulation</span><span>'+(s.modulation||'N/A')+'</span></div><div class="cyber-row"><span class="cyber-label">Pattern</span><span>'+(s.emission_pattern||'N/A')+'</span></div><div class="cyber-row"><span class="cyber-label">Collector</span><span>'+(s.collector_id||'N/A')+'</span></div><div class="cyber-row"><span class="cyber-label">Confidence</span><span>'+Number(s.confidence_pct||0).toFixed(0)+'%</span></div><div class="cyber-row"><span class="cyber-label">Threat Score</span><span style="color:var(--red);">'+(s.threat_score||'')+'</span></div><div class="cyber-row"><span class="cyber-label">Grid</span><span>'+(s.grid_square||'')+'</span></div>'+(actions.length?'<div style="background:#0d2818;padding:4px;margin-top:4px;border-radius:3px;font-size:0.4rem;"><div style="color:#00ff88;font-weight:bold;">⚡ CORRECTIVE ACTIONS</div>'+actions.map(a=>'<div style="color:#06b6d4;">• '+a+'</div>').join('')+'</div>':'')+'<div class="action-btns"><button class="action-btn red" onclick="execSigintAction(\'jam\')">📻 JAM</button><button class="action-btn orange" onclick="execSigintAction(\'geolocate\')">📍 GEOLOCATE</button><button class="action-btn cyan" onclick="execSigintAction(\'alert_ew\')">⚡ ALERT EW</button><button class="action-btn blue" onclick="execSigintAction(\'task_collection\')">🛩 TASK COLLECTION</button><button class="action-btn green" onclick="execSigintAction(\'classify\')">📋 CLASSIFY</button><button class="action-btn purple" onclick="execSigintAction(\'share_intel\')">🔗 SHARE INTEL</button></div></div>';
+            }
+            html += sigintData.length ? sigintData.filter(s=>!selectedSigint||s.intercept_id!==selectedSigint.intercept_id).map(s => {
+                return '<div class="sigint-card" onclick="selectSigint(sigintData['+sigintData.indexOf(s)+'])" style="cursor:pointer;opacity:0.7;"><h4>'+getSigintIcon(s.signal_type)+' '+(s.signal_type||'UNKNOWN')+' - '+(s.emitter_classification||'UNKNOWN')+' <span class="sev-badge '+(s.threat_level||'')+'">'+s.threat_level+'</span></h4><div class="cyber-row"><span class="cyber-label">Freq</span><span>'+Number(s.frequency_mhz||0).toFixed(2)+' MHz</span></div><div class="cyber-row"><span class="cyber-label">Collector</span><span>'+(s.collector_id||'')+'</span></div><div style="color:#06b6d4;font-size:0.38rem;margin-top:2px;">Click to select & take action</div></div>';
+            }).join('') : (selectedSigint?'':'<div style="color:var(--dim);padding:8px;">No SIGINT intercepts</div>');
+            document.getElementById('sigint-detail').innerHTML = html;
+        }
+
+        function showTab(t) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            const idx = {alerts:0, cyber:1, sigint:2, query:3, actions:4}[t] || 0;
+            document.querySelectorAll('.tab')[idx].classList.add('active');
+            document.getElementById(t+'-tab').classList.add('active');
+        }
+
+        async function fetchData() {
+            try {
+                const [acRes, nvRes, cyRes, sgRes] = await Promise.all([
+                    fetch(API+'/api/aircraft'), fetch(API+'/api/naval'),
+                    fetch(API+'/api/cyber'), fetch(API+'/api/sigint')
+                ]);
+                aircraft = (await acRes.json()).aircraft || [];
+                naval = (await nvRes.json()).vessels || [];
+                cyberThreats = (await cyRes.json()).threats || [];
+                sigintData = (await sgRes.json()).intercepts || [];
+                syncSelections();
+                updateMarkers(); renderLists(); renderCyberDetail(); renderSigintDetail(); checkProximityAlerts();
+            } catch(e) { console.error('Fetch error:', e); }
+        }
+
+        async function fetchAlerts() {
+            try { alerts = (await (await fetch(API+'/api/alerts')).json()).alerts || []; renderAlerts(); } catch(e) {}
+        }
+
+        async function runQuery() {
+            const q = document.getElementById('query-input').value.trim();
+            if (!q) return;
+            document.getElementById('query-result').textContent = 'Processing...';
+            try {
+                const r = await fetch('http://localhost:5002/api/query', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({query:q})});
+                let text = ((await r.json()).result?.response || 'No results');
+                text = text.replace(/\*\*(.*?)\*\*/g, '<strong style="color:var(--blue);">$1</strong>');
+                document.getElementById('query-result').innerHTML = text;
+            } catch(e) { document.getElementById('query-result').textContent = 'Query service unavailable.'; }
+        }
+
+        initMap();
+        fetchData();
+        fetchAlerts();
+        setInterval(fetchData, 3000);
+        setInterval(fetchAlerts, 5000);
+        setInterval(() => document.getElementById('clock').textContent = new Date().toLocaleTimeString(), 1000);
+    </script>
+</body>
+</html>
